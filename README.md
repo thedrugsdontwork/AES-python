@@ -1,2 +1,7 @@
 # AESexample
-An example of aes encryption .（ECB,CBC）
+An example of AES algorithm.
+## mode 
+- ECB
+- CBC 
+## implementation  
+- python
