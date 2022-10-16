@@ -1,8 +1,23 @@
 
 from ast import keyword
 from enum import Enum
+from locale import ABDAY_1
 
 class KeyLengthError(Exception):...
+##############################################################
+#   byte_arr
+#   [a0,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15]
+#   convert to
+#   4x4 matrix
+#   |a0,a4,a8 ,a12|
+#   |a1,a5,a9 ,a13|
+#   |a2,a6,a10,a14|
+#   |a3,a7,a11,a15|
+#   column
+#   a0,a1,a2,a3|a4,a5,a6,a7|...
+#   row
+#   a0,a4,a8,a11|a1,a5,a9,a13|... 
+##############################################################
 
 S_BOX=[
     [0X63,0X7C,0X77,0X7B,0XF2,0X6B,0X6F,0XC5,0X30,0X01,0X67,0X2B,0XFE,0XD7,0XAB,0X76],
@@ -81,7 +96,11 @@ def sub_bytes(byte_arr:list):
 
 def __shift_rows_core(byte_arr:list,start:int):
     """
-        end-start>=16 
+        @note   :left shift each row  4x4 matrix(end-start>=16) 
+        row1<<shift 0
+        row2<<shift 1
+        row3<<shift 2
+        row4<<shift 3
     """
     t1=byte_arr[start+1]
     byte_arr[start+1],byte_arr[start+5],byte_arr[start+9],byte_arr[start+13]=\
@@ -118,6 +137,9 @@ def mix_columns(byte_arr):
         byte_arr[i+12],byte_arr[i+13],byte_arr[i+14],byte_arr[i+15]=tmp
 
 def __rotword(byte_arr:list,start):
+    """
+        @note   :left shift one position
+    """
     t1=byte_arr[start]
     byte_arr[start],byte_arr[start+1],byte_arr[start+2],byte_arr[start+3]=\
     byte_arr[start+1],byte_arr[start+2],byte_arr[start+3],t1
@@ -189,6 +211,58 @@ def encrypt_CBC(byte_arr,byte_key,byte_iv):
         res.extend(tmp)
     return bytes(res)
 
+
+def encrypt_CFB128(byte_arr,byte_key,byte_iv):
+    key_len=len(byte_key)
+    aes=_AES.get(key_len)
+    if not aes:raise KeyLengthError(f"Key length dosent match:[{len(byte_key)}] except:[16,24,32]")
+    en_round=aes['en_round']
+    key_words=aes['key_words']
+    byte_arr=list(byte_arr)
+    key_arr=key_expansion(byte_key,key_words,en_round)
+    tmp=[*byte_iv]
+    res=[]
+    for i in range(0,len(byte_arr),16):
+        tmp_res=encrypt_block(tmp,key_arr,en_round)
+        tmp=__xor(byte_arr[i:i+16],tmp_res)
+        res.extend(tmp)
+    return bytes(res)
+
+def encrypt_OFB(byte_arr,byte_key,byte_iv):
+    key_len=len(byte_key)
+    aes=_AES.get(key_len)
+    if not aes:raise KeyLengthError(f"Key length dosent match:[{len(byte_key)}] except:[16,24,32]")
+    en_round=aes['en_round']
+    key_words=aes['key_words']
+    byte_arr=list(byte_arr)
+    key_arr=key_expansion(byte_key,key_words,en_round)
+    tmp=[*byte_iv]
+    res=[]
+    for i in range(0,len(byte_arr),16):
+        tmp_res=encrypt_block(tmp,key_arr,en_round)
+        tmp=__xor(byte_arr[i:i+16],tmp_res)
+        res.extend(tmp)
+        tmp=tmp_res
+    return bytes(res)
+
+def encrypt_CTR(byte_arr,byte_key,byte_nonce):
+    key_len=len(byte_key)
+    aes=_AES.get(key_len)
+    if not aes:raise KeyLengthError(f"Key length dosent match:[{len(byte_key)}] except:[16,24,32]")
+    en_round=aes['en_round']
+    key_words=aes['key_words']
+    byte_arr=list(byte_arr)
+    key_arr=key_expansion(byte_key,key_words,en_round)
+    counter=0#long int
+    res=[]
+    for i in range(0,len(byte_arr),16):
+        tmp=[*byte_nonce,(counter>>56)&0xFF,(counter>>48)&0xFF,(counter>>40)&0xFF,(counter>>32)&0xFF,(counter>>24)&0xFF,(counter>>16)&0xFF,(counter>>8)&0xFF,counter&0xFF]
+        tmp_res=encrypt_block(tmp,key_arr,en_round)
+        tmp=__xor(byte_arr[i:i+16],tmp_res)
+        res.extend(tmp)
+        counter+=1
+    return bytes(res)
+
 #For test
 import base64
 from Crypto.Cipher import AES  
@@ -202,21 +276,43 @@ if __name__=='__main__':
     print("ECB encrypt:")
     res=encrypt_ECB(s,key)
     cipher = AES.new(b"46cc793c53dc451bshagshaj",AES.MODE_ECB)
-    data = cipher.encrypt(s)
+    data = cipher.encrypt(s[:32])
+    data1=cipher.encrypt(s[32:])
     print(base64.b64encode(res))
-    print(base64.b64encode(data))
+    print(base64.b64encode(bytes([*data,*data1])))
     
     #CBC MODE
     print("CBC encrypt:")
     cipher = AES.new(b"46cc793c53dc451bshagshaj",AES.MODE_CBC,iv=iv)
-    data = cipher.encrypt(s)
+    data = cipher.encrypt(s[:32])
+    cipher = AES.new(b"46cc793c53dc451bshagshaj",AES.MODE_CBC,iv=data[-16:])
+    data1=cipher.encrypt(s[32:])
     res=encrypt_CBC(s,key,iv)
     print(base64.b64encode(res))
+    print(base64.b64encode(bytes([*data,*data1])))     
+
+    #CFB MODE
+    print("CFB encrypt:")
+    res=encrypt_CFB128(s,key,iv)
+    cipher = AES.new(b"46cc793c53dc451bshagshaj",AES.MODE_CFB,iv=iv,segment_size=128)
+    data = cipher.encrypt(s)
+    print(base64.b64encode(res))
     print(base64.b64encode(data))
-
-
-
-
-
+    # help(AES.new)
+    #OFB MODE
+    print("OFB encrypt:")
+    res=encrypt_OFB(s,key,iv)
+    cipher = AES.new(b"46cc793c53dc451bshagshaj",AES.MODE_OFB,iv=iv)
+    data = cipher.encrypt(s)
+    print(base64.b64encode(res))
+    print(base64.b64encode(data))
+    #OFB MODE
+    print("CTR encrypt:")
+    res=encrypt_CTR(s,key,bytes([0,1,2,3,4,5,6,7]))
+    cipher = AES.new(b"46cc793c53dc451bshagshaj",AES.MODE_CTR,nonce=bytes([0,1,2,3,4,5,6,7]))
+    data = cipher.encrypt(s)
+    print(base64.b64encode(res))
+    print(base64.b64encode(data))
+    # help(AES.new)
 
     
